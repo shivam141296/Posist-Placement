@@ -1,0 +1,402 @@
+const createBlock = (lastBlock, data) =>{
+	let newBlock = {
+	    timestamp: new Date().getTime()
+	  , data: data
+	  , index: lastBlock.index+1
+	  , referenceNodeId:lastblock.referenceNodeId
+	  , childReferenceNodeId:lastblock.childRefernceNodeId
+          , genesisReferenceNodeId:lastblock.genesisReferenceNodeId
+	  , previousHash: lastBlock.hash
+	};
+
+	newBlock.hash = createHash(newBlock);
+
+	return newBlock;
+}
+const genesisBlock = { 
+	index: 0
+  , timestamp: new Date().getTime()
+  , data: 'Our genesis data'
+  , previousHash: "-1"
+  , referenceNodeId:0
+  , childReferenceNodeId:0
+  , genesisReferenceNodeId:0
+};
+
+genesisBlock.hash = createHash(genesisBlock);
+addToChain(genesisBlock);
+
+const BrewChain = function() {
+    let chain = [];
+    let currentBlock = {};
+    let genesisBlock = {};
+
+    function init(){
+        genesisBlock = { 
+            index: 0
+          , timestamp: new Date().getTime()
+          , data: 'our genesis data'
+          , previousHash: "-1"
+        };
+
+        genesisBlock.hash = createHash(genesisBlock);
+        chain.push(genesisBlock);
+        currentBlock = genesisBlock; 	
+    }
+
+    function createHash({ timestamp, data, index, previousHash }) {
+        return Crypto.createHash('SHA256').update(timestamp+data+index+previousHash).digest('hex');
+    }
+
+    function addToChain(block){
+        if(checkNewBlockIsValid(block, currentBlock)){	
+            chain.push(block);
+            currentBlock = block; 
+            return true;
+        }
+
+        return false;    
+    }
+
+    function createBlock(data){
+        let newBlock = {
+            timestamp: new Date().getTime()
+          , data: data
+          , index: currentBlock.index+1
+          , previousHash: currentBlock.hash
+        };
+
+        newBlock.hash = createHash(newBlock);
+  
+        return newBlock;
+    }
+
+    function getLatestBlock(){
+        return currentBlock;
+    }
+
+    function getTotalBlocks(){
+        return chain.length;
+    }
+
+    function getChain(){
+        return chain;
+    }
+
+    function checkNewBlockIsValid(block, previousBlock){
+        if(previousBlock.index + 1 !== block.index){
+            //Invalid index
+            return false;
+        }else if (previousBlock.hash !== block.previousHash){
+            //The previous hash is incorrect
+            return false;
+        }else if(!hashIsValid(block)){
+            //The hash isn't correct
+            return false;
+        }
+		
+        return true;
+    }	
+
+    function hashIsValid(block){
+        return (createHash(block) == block.hash);
+    }
+
+    return {
+        init,
+        createBlock,
+        addToChain,
+        checkNewBlockIsValid,
+        getLatestBlock,
+        getTotalBlocks,
+        getChain
+    }
+};    
+
+let myBrew = new BrewChain();
+myBrew.init();
+
+myBrew.addToChain(myBrew.createBlock('The 1st block'));
+myBrew.addToChain(myBrew.createBlock('The 2nd block'));
+
+const BrewNode = function(port){
+    let brewSockets = [];
+    let brewServer;
+    let _port = port
+    let chain = new BrewChain();
+
+    function init(){
+
+        chain.init();
+		
+        brewServer = new WebSocket.Server({ port: _port });
+		
+        brewServer.on('connection', (connection) => {
+            console.log('connection in');
+            initConnection(connection);
+        });		
+    }
+
+    const messageHandler = (connection) =>{
+        connection.on('message', (data) => {
+            console.log('Message In:');
+            const msg = JSON.parse(data);
+
+            console.log(msg.event);
+        });
+        console.log('message handler setup');
+    }
+
+    const broadcastMessage = (message) => {
+        console.log('sending to all '+message)
+        brewSockets.forEach(node => node.send(JSON.stringify({event: message})))
+    }
+
+    const closeConnection = (connection) => {
+        console.log('closing connection');
+        brewSockets.splice(brewSockets.indexOf(connection),1);
+    }
+
+    const initConnection = (connection) => {
+        console.log('init connection');
+
+        messageHandler(connection);
+		
+        brewSockets.push(connection);
+
+        connection.on('error', () => closeConnection(connection));
+        connection.on('close', () => closeConnection(connection));
+    }
+
+    const createBlock = (teammember) => {
+        let newBlock = chain.createBlock(teammember)
+        chain.addToChain(newBlock);
+    }
+
+    const getStats = () => {
+        return {
+            blocks: chain.getTotalBlocks()
+        }
+    }
+
+    const addPeer = (host, port) => {
+        let connection = new WebSocket(`ws://${host}:${port}`);
+
+        connection.on('error', (error) =>{
+            console.log(error);
+        });
+
+        connection.on('open', (msg) =>{
+            initConnection(connection);
+        });
+    }
+
+    return {
+        init,
+        broadcastMessage,
+        addPeer,
+        createBlock,
+        getStats
+    }
+
+}
+
+onst http_port = 3000
+
+let BrewHTTP = function (){
+    const app = new express();
+
+    app.use(bodyParser.json());
+
+    app.get('/broadcast', (req, res)=>{
+        console.log('broadcasting '+req.query.message)
+        node1.broadcastMessage(req.query.message)
+        res.send();
+    })
+
+    // For testing purposes currently only uses localhost
+    app.get('/addNode/:port', (req, res)=>{
+        console.log('adding localhost host: '+req.params.port)
+        node1.addPeer('localhost', req.params.port)
+
+        res.send();
+    })
+
+    app.get('/spawnBrew/:teammember', (req, res)=>{
+        let newBlock = node1.createBlock(req.params.teammember);
+		
+        console.log('block created');
+
+        console.log(node1.getStats())
+
+        res.send();
+    })
+
+    app.listen(http_port, () => {
+        console.log(`http server up.. ${http_port}`);
+    })
+}
+
+let httpserver = new BrewHTTP();
+
+const BrewNode = function(port){
+
+    const messageHandler = (connection) =>{
+        connection.on('message', (data) => {
+            const msg = JSON.parse(data);
+            switch(msg.event){
+                case "block":
+                    console.log('Block recieved');
+                    console.log(msg.message);
+                    break;  
+                default:  
+                    console.log('Unknown message');
+            }
+        });
+    }
+    const broadcastMessage = (event, message) => {
+        brewSockets.forEach(node => node.send(JSON.stringify({ event, message})))
+    }
+
+    const createBlock = (teammember) => {
+        let newBlock = chain.createBlock(teammember)
+        chain.addToChain(newBlock);
+
+        broadcastMessage('block', newBlock);
+
+    }
+
+onst BrewChain = function() 
+
+    const genesisBlock = { 
+        index: 0
+      , timestamp: 1511818270000
+      , data: 'our genesis data'
+      , previousHash: "-1"
+    };
+
+const BLOCK = "BLOCK";
+    const REQUEST_CHAIN = "REQUEST_CHAIN";
+	
+
+    const messageHandler = (connection) =>{
+        connection.on('message', (data) => {
+            const msg = JSON.parse(data);
+            switch(msg.event){
+                case BLOCK:
+                    processedRecievedBlock(msg.message);
+                    break;  
+                default:  
+                    console.log('Unknown message');
+            }
+        });
+    }
+
+    const processedRecievedBlock = (block) => {
+
+        let currentTopBlock = chain.getLatestBlock();
+
+        // Is the same or older?
+        if(block.index <= currentTopBlock.index){
+        	console.log('No update needed');
+        	return;
+        }
+
+        //Is claiming to be the next in the chain
+        if(block.previousHash == currentTopBlock.hash){
+        	//Attempt the top block to our chain
+        	chain.addToChain(block);
+
+        	console.log('New block added');
+        	console.log(chain.getLatestBlock());
+        }else{
+        	// It is ahead.. we are therefore a few behind, request the whole chain
+        	console.log('requesting chain');
+        	broadcastMessage(REQUEST_CHAIN,"");
+        }
+    }
+const CHAIN = "CHAIN";
+
+const messageHandler = (connection) =>{
+        connection.on('message', (data) => {
+            const msg = JSON.parse(data);
+            switch(msg.event){
+            	case REQUEST_CHAIN:
+                    connection.send(JSON.stringify({ event: CHAIN, message: chain.getChain()}));
+                    break;                  
+                case BLOCK:
+                    processedRecievedBlock(msg.message);
+                    break;  
+                case CHAIN:
+                    processedRecievedChain(msg.message);
+                    break;  
+
+    const processedRecievedChain = (blocks) => {
+        let sortedBlocks = blocks.sort((block1, block2) => (block1.index - block2.index))
+
+        //Is the chain valid
+        console.log('recieved a chain');
+        console.log(sortedBlocks);
+    }
+
+ function checkNewChainIsValid(newChain){
+        if(createHash(newChain[0]) !== genesisBlock.hash ){
+            return false;
+        }
+
+        let previousBlock = newChain[0];
+        let blockIndex = 1;
+
+        while(blockIndex < newChain.length){
+            let block = newChain[blockIndex];
+
+            if(block.previousHash !== createHash(previousBlock)){
+                return false;
+            }
+
+            if(block.hash.slice(-3) !== "000"){	
+                return false;
+            }
+
+            previousBlock = block;
+            blockIndex++;
+        }
+
+        return true;
+    }
+	
+    function replaceChain(newChain){
+        chain = newChain;
+        currentBlock = chain[chain.length-1];
+    }
+
+const processedRecievedChain = (blocks) => {
+        let newChain = blocks.sort((block1, block2) => (block1.index - block2.index))
+
+        if(newChain.length > chain.getTotalBlocks() && chain.checkNewChainIsValid(newChain)){
+            chain.replaceChain(newChain);
+            console.log('Chain replaced');
+        }
+    }
+
+const REQUEST_BLOCK = "REQUEST_BLOCK";
+
+    case REQUEST_BLOCK:
+        requestLatestBlock(connection);    
+
+    const requestLatestBlock = (connection) => {
+        connection.send(JSON.stringify({ event: BLOCK, message: chain.getLatestBlock()}))   
+    }
+
+    const initConnection = (connection) => {
+        console.log('init connection');
+
+        messageHandler(connection);
+        
+        requestLatestBlock(connection);
+
+        brewSockets.push(connection);
+
+        connection.on('error', () => closeConnection(connection));
+        connection.on('close', () => closeConnection(connection));
+    }
