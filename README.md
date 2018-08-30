@@ -14,3 +14,6 @@ referenceNode-refer to address of node.
 childReferenceNode-refer to address of child node.
 hash - (a hash of the timestamp,index,data and previous hash)
 previous hash - the hash of the previous block
+
+Our Brewchain contains the ability to create new blocks, add new blocks to our chain and also check the validity of a block.
+The test code at the end adds two blocks and then outputs the chain to check that the blocks are successfully being created.
